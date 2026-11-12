@@ -1,5 +1,6 @@
 """Loan lifecycle with durable request IDs and retryable cross-service operations."""
 import os
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID
@@ -8,7 +9,7 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import DateTime, String, create_engine, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 engine = create_engine(os.environ['DATABASE_URL'], pool_pre_ping=True)
@@ -45,10 +46,17 @@ class LoanOutput(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app):
-    with engine.begin() as connection:
-        if engine.dialect.name == "postgresql":
-            connection.execute(text("SELECT pg_advisory_xact_lock(583)"))
-        Base.metadata.create_all(connection)
+    for attempt in range(30):
+        try:
+            with engine.begin() as connection:
+                if engine.dialect.name == "postgresql":
+                    connection.execute(text("SELECT pg_advisory_xact_lock(583)"))
+                Base.metadata.create_all(connection)
+            break
+        except OperationalError:
+            if attempt == 29:
+                raise
+            await asyncio.sleep(1)
     yield
     engine.dispose()
 
