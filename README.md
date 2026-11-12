@@ -1,43 +1,96 @@
 # Campus Loan Service
 
-Mohnish Saini — 2025MT03144 — Scalable Services individual assignment.
+Scalable Services assignment by Mohnish Saini, 2025MT03144.
 
-This service has its own repository, Docker image, database and independent tests.
-Python 3.12, FastAPI, SQLAlchemy and PostgreSQL 16.
+This service records equipment borrowing and returns. It calls the [Equipment Service](https://github.com/mohnish-saini/campus-equipment-service) through REST to reserve or release an item. Each service has its own PostgreSQL database.
 
-## Build and test independently
+## Run locally
 
-```bash
-docker build -t campus-loan:1.0 .
-docker run --rm -v "$PWD/tests:/srv/tests:ro" campus-loan:1.0 python -m pytest -q -p no:cacheprovider
-```
+Start the Equipment Service first. The [Equipment README](https://github.com/mohnish-saini/campus-equipment-service#run-the-application-with-docker) includes the commands to clone and run both repositories.
 
-Tests use temporary SQLite databases and a mocked HTTP dependency for Loan. The full submission additionally includes real PostgreSQL integration and concurrency checks.
-
-## Run
-
-Set DATABASE_URL to a PostgreSQL URL such as `postgresql+psycopg://USER:PASSWORD@DATABASE_HOST/DATABASE_NAME`. Loan also needs EQUIPMENT_SERVICE_URL (default `http://equipment-service:8000`).
+From this repository's folder, start Loan and its database with:
 
 ```bash
-docker run --rm -p 8000:8000 --env-file .env campus-loan:1.0
+docker compose up --build -d
 ```
 
-Create .env locally. Never commit real credentials. Swagger UI: /docs. Liveness: /health/live. Database readiness: /health/ready.
+The API page is http://localhost:8002/docs. The Compose file expects Equipment on http://host.docker.internal:8001 through Docker Desktop.
 
-## Structure
+For a manual container configuration, `DATABASE_URL` sets the Loan PostgreSQL connection and `EQUIPMENT_SERVICE_URL` sets the Equipment API address. In Minikube, the Equipment address is `http://equipment-service:8000`.
 
-- app/main.py: API routes, models and lifecycle logic.
-- tests/: independent service tests.
-- requirements.txt: pinned direct dependencies.
-- Dockerfile: non-root container image.
-- cluster-example.json: full local Minikube example; build and load both service images before applying.
+## Loan endpoints
 
-## Collaboration
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/loans` | Borrow an item |
+| GET | `/loans` | List loans; optionally filter by borrower_id |
+| GET | `/loans/{loan_id}` | Check a loan |
+| POST | `/loans/{loan_id}/return` | Return the borrowed item |
+| GET | `/health/live` | Check the API process |
+| GET | `/health/ready` | Check the database connection |
 
-Equipment owns inventory and reservations. Loan owns borrowing records and calls Equipment over REST; neither service accesses the other's database. UUID loan IDs identify idempotent requests. PostgreSQL row locks prevent over-allocation. Loan persists PENDING intent before calling Equipment, allowing a timed-out request to recover on replay with the same ID. Returns are idempotent. A background reconciliation worker is not implemented.
+A borrowing request contains a new UUID, the equipment ID and the borrower ID:
 
-Companion repositories:
-- https://github.com/mohnish-saini/campus-equipment-service
-- https://github.com/mohnish-saini/campus-loan-service
+```json
+{
+  "loan_id": "e1df5bc8-246b-4d09-bbda-3b3524fe7cc0",
+  "equipment_id": "<ID returned when equipment is registered>",
+  "borrower_id": "2025MT03144"
+}
+```
 
-The full submission includes deployment scripts, Postman collection, architecture and evidence. This is a local academic demonstration without authentication. Production needs identity checks, protected internal endpoints, managed credentials, migrations and database backups. Manifest passwords are local examples.
+Use a new loan ID for each new borrowing request. To retry a request, keep the same ID and payload. The service saves a PENDING record before calling Equipment. It becomes ACTIVE when the reservation succeeds, or REJECTED when Equipment refuses it. If Equipment is unreachable, the API returns 503 and the request can be retried. Returned loans have status RETURNED. Repeating a return does not release another unit.
+
+## Run the Loan tests
+
+```bash
+docker build --target test -t campus-loan-test .
+docker run --rm campus-loan-test
+```
+
+The tests use SQLite and replace the Equipment HTTP call with a mock. They check retrying after a timeout, rejected requests and repeated returns.
+
+To check both running services with real PostgreSQL, run the integration script from this folder using Python 3.12:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+python tests/integration_check.py
+```
+
+The default URLs are http://localhost:8001 and http://localhost:8002. For Minikube port-forwards, run:
+
+```bash
+EQUIPMENT_URL=http://localhost:8101 LOAN_URL=http://localhost:8102 python tests/integration_check.py
+```
+
+The script checks the full workflow, including eight requests competing for one unit and six retries of the same request. It saves the results in `integration-results.json`.
+
+## Test with Postman
+
+Import `postman/CampusEquipmentLending.postman_collection.json` into Postman. The collection defaults to the Minikube ports 8101 and 8102. For Docker Compose, change `equipment_url` to `http://localhost:8001` and `loan_url` to `http://localhost:8002` in the collection variables.
+
+Run requests 01 to 13 in order. They register a camera, borrow it, repeat the request, check stock, reject a second borrower and return the camera. Requests 07 and 12 intentionally expect 409 and 422. A full collection run has 17 assertions.
+
+## Deploy to Minikube
+
+Follow the [Minikube steps in the Equipment README](https://github.com/mohnish-saini/campus-equipment-service#deploy-both-services-to-minikube). After building and loading both images, this service's resources can be applied separately:
+
+```bash
+kubectl --context campus-lending apply -f k8s.yaml
+```
+
+## Files
+
+- `app/main.py`: Loan model, request models and routes.
+- `tests/test_loans.py`: independent Loan tests.
+- `tests/integration_check.py`: checks against both running services.
+- `postman/`: collection for the borrowing and return workflow.
+- `requirements.txt`: API dependencies.
+- `requirements-dev.txt`: test dependencies.
+- `Dockerfile`: application image and optional test target.
+- `compose.yaml`: Loan API and database for local Docker testing.
+- `k8s.yaml`: Loan deployment for Minikube.
+
+Login, borrower verification and automatic recovery of abandoned PENDING loans are not included. The passwords in the deployment files are local demo values. This is a local assignment setup, not a production deployment.

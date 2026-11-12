@@ -1,0 +1,27 @@
+name: campus-loan
+services:
+  loan-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: loans
+      POSTGRES_USER: loans
+      POSTGRES_PASSWORD: local-loan-password
+    volumes:
+      - loan-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U loans -d loans"]
+      interval: 3s
+      retries: 20
+  loan-service:
+    image: campus-loan:1.0
+    build: .
+    ports:
+      - "8002:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://loans:local-loan-password@loan-db/loans
+      EQUIPMENT_SERVICE_URL: http://host.docker.internal:8001
+    depends_on:
+      loan-db:
+        condition: service_healthy
+volumes:
+  loan-data:

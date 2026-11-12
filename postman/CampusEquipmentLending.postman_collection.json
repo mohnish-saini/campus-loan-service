@@ -1,0 +1,350 @@
+{
+  "info": {
+    "name": "2025MT03144 Campus Equipment Lending",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Run requests in order. Defaults target Minikube port-forwards. Each run registers fresh equipment."
+  },
+  "variable": [
+    {
+      "key": "equipment_url",
+      "value": "http://localhost:8101"
+    },
+    {
+      "key": "loan_url",
+      "value": "http://localhost:8102"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 Equipment readiness",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{equipment_url}}/health/ready"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Loan readiness",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{loan_url}}/health/ready"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 Register one camera",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{equipment_url}}/equipment",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Campus DSLR Camera\",\n  \"category\": \"Photography\",\n  \"total_quantity\": 1\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('equipment_id', pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 Borrow camera",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{loan_url}}/loans",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"loan_id\": \"{{loan_id}}\",\n  \"equipment_id\": \"{{equipment_id}}\",\n  \"borrower_id\": \"2025MT03144\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+              "pm.test('Loan ACTIVE', () => pm.expect(pm.response.json().status).to.eql('ACTIVE'))"
+            ]
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('loan_id', pm.variables.replaceIn('{{$guid}}'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 Retry identical request safely",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{loan_url}}/loans",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"loan_id\": \"{{loan_id}}\",\n  \"equipment_id\": \"{{equipment_id}}\",\n  \"borrower_id\": \"2025MT03144\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 Confirm stock is zero",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{equipment_url}}/equipment/{{equipment_id}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('No units left', () => pm.expect(pm.response.json().available_quantity).to.eql(0))"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 Reject second borrower",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{loan_url}}/loans",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"loan_id\": \"{{$guid}}\",\n  \"equipment_id\": \"{{equipment_id}}\",\n  \"borrower_id\": \"another-student\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 409', () => pm.response.to.have.status(409));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 View loan",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{loan_url}}/loans/{{loan_id}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 Return camera",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{loan_url}}/loans/{{loan_id}}/return"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Loan RETURNED', () => pm.expect(pm.response.json().status).to.eql('RETURNED'))"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 Retry return safely",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{loan_url}}/loans/{{loan_id}}/return"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 Confirm restored stock",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{equipment_url}}/equipment/{{equipment_id}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('One unit available', () => pm.expect(pm.response.json().available_quantity).to.eql(1))"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 Reject invalid quantity",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{equipment_url}}/equipment",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Invalid\",\n  \"category\": \"Test\",\n  \"total_quantity\": 0\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 422', () => pm.response.to.have.status(422));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 List borrower loans",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{loan_url}}/loans?borrower_id=2025MT03144"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
